@@ -1,5 +1,5 @@
-use actix_web::client::ClientResponse;
 use actix_web::{dev, HttpResponse};
+use awc::ClientResponse;
 
 pub trait IntoHttpResponse {
   fn into_http_response(self) -> HttpResponse;
@@ -19,7 +19,7 @@ impl IntoHttpResponse
     let mut response = HttpResponse::build(self.status());
 
     self.headers().iter().for_each(|(k, v)| {
-      response.set_header(k, v.clone());
+      response.insert_header((k, v.clone()));
     });
 
     // TODO: other stuff than header and status (e.g. extensions or
@@ -30,22 +30,26 @@ impl IntoHttpResponse
 }
 
 pub mod util {
-  use actix_web::client::{Client, SendRequestError};
-  use actix_web::{get, web, HttpResponse};
+  use actix_web::{get, web, HttpResponse, error};
+  use actix_web::web::Data;
+  use awc::Client;
 
   use super::IntoHttpResponse;
 
   pub fn google_config(cfg: &mut web::ServiceConfig) {
-    cfg.data(Client::default()).service(google_proxy);
+    cfg.app_data(Data::new(Client::default())).service(google_proxy);
   }
 
   #[get("/{url:.*}")]
   pub async fn google_proxy(
-    web::Path((url,)): web::Path<(String,)>,
+    path: web::Path<(String,)>,
     client: web::Data<Client>,
-  ) -> actix_web::Result<HttpResponse, SendRequestError> {
-    let url = format!("https://www.google.com/{}", url);
+  ) -> actix_web::Result<HttpResponse> {
+    let url = format!(
+      "https://www.google.com/{}",
+      path.into_inner().0
+    );
 
-    client.get(&url).send().await?.into_wrapped_http_response()
+    client.get(&url).send().await.map_err(|e| error::ErrorInternalServerError(e))?.into_wrapped_http_response()
   }
 }
